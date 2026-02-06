@@ -20,7 +20,7 @@ th { background:#f2f2f2; font-family:inherit; }
 <h1>VLSM / FLSM калькулятор</h1>
 
 <label>Базовая сеть</label>
-<input id="base" value="192.168.1.0/24">
+<input id="base" placeholder="192.168.1.0/24">
 
 <label>Режим</label>
 <select id="mode">
@@ -31,17 +31,17 @@ th { background:#f2f2f2; font-family:inherit; }
 
 <div id="vlsmBlock">
   <label>Подсети (нужно хостов)</label>
-  <input id="hostsList" value="50, 20, 10, 5">
+  <input id="hostsList" placeholder="50, 20, 10, 5">
 </div>
 
 <div id="flsmCountBlock" style="display:none">
   <label>Количество равных подсетей</label>
-  <input id="netCount" type="number" min="1" value="4">
+  <input id="netCount" type="number" min="1" placeholder="4">
 </div>
 
 <div id="flsmHostsBlock" style="display:none">
   <label>Хостов в каждой подсети</label>
-  <input id="hostsPerNet" type="number" min="1" value="30">
+  <input id="hostsPerNet" type="number" min="1" placeholder="30">
 </div>
 
 <div id="error" class="error"></div>
@@ -85,10 +85,11 @@ function calc(){
   result.style.display='none';
   result.querySelector('tbody').innerHTML='';
 
-  if(!base.value.includes('/')) return;
+  if(!base.value || !base.value.includes('/')) return;
 
   let [baseIp, basePref] = base.value.split('/');
   basePref = Number(basePref);
+  if(isNaN(basePref)) return;
 
   const baseStart = ipToInt(baseIp) & maskFromPrefix(basePref);
   const baseSize = 2 ** (32-basePref);
@@ -98,6 +99,8 @@ function calc(){
   let current = baseStart;
 
   if(mode.value==='vlsm'){
+    if(!hostsList.value.trim()) return;
+
     let hosts = hostsList.value.split(',')
       .map(x=>Number(x.trim()))
       .filter(x=>x>0)
@@ -115,6 +118,8 @@ function calc(){
 
   if(mode.value==='flsmCount'){
     const n = Number(netCount.value);
+    if(!n || n<1) return;
+
     const bits = Math.ceil(Math.log2(n));
     const pref = basePref + bits;
     const size = 2 ** (32-pref);
@@ -129,6 +134,8 @@ function calc(){
 
   if(mode.value==='flsmHosts'){
     const h = Number(hostsPerNet.value);
+    if(!h || h<1) return;
+
     const pref = prefixFromHosts(h);
     const size = 2 ** (32-pref);
 
@@ -158,7 +165,7 @@ function calc(){
     result.querySelector('tbody').appendChild(tr);
   });
 
-  result.style.display='';
+  if(rows.length) result.style.display='';
 }
 
 function makeRow(net,pref,bc){
@@ -168,8 +175,6 @@ function makeRow(net,pref,bc){
     last: pref>=31?bc:bc-1
   };
 }
-
-calc();
 </script>
 </body>
 </html>

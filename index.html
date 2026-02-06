@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>VLSM-калькулятор</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body { font-family: Arial, sans-serif; margin:16px; color:#111; }
+label { display:block; margin-top:10px; font-weight:600; }
+input, button { font:inherit; padding:6px; margin-top:6px; width:100%; }
+button { width:auto; margin-top:12px; }
+table { border-collapse:collapse; width:100%; margin-top:16px; }
+th, td { border-bottom:1px solid #eee; padding:6px 8px; font-family:monospace; }
+th { background:#f2f2f2; font-family:inherit; }
+.error { color:#b00; margin-top:6px; }
+.small { font-size:90%; color:#555; }
+</style>
+</head>
+
+<body>
+<h1>VLSM-калькулятор</h1>
+
+<label>Базовая сеть</label>
+<input id="base" value="192.168.1.0/24">
+
+<label>Подсети (нужно хостов)</label>
+<input id="hosts" value="50, 20, 10, 5">
+<div class="small">Через запятую, порядок не важен</div>
+
+<button onclick="calc()">Рассчитать</button>
+<div id="error" class="error"></div>
+
+<table id="result" style="display:none">
+<thead>
+<tr>
+  <th>#</th>
+  <th>Хостов</th>
+  <th>Сеть</th>
+  <th>Префикс</th>
+  <th>Маска</th>
+  <th>Первый usable</th>
+  <th>Последний usable</th>
+  <th>Broadcast</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<script>
+function ipToInt(ip){
+  return ip.split('.').reduce((a,b)=>a*256+Number(b),0)>>>0;
+}
+function intToIp(i){
+  return [(i>>>24)&255,(i>>>16)&255,(i>>>8)&255,i&255].join('.');
+}
+function maskFromPrefix(p){
+  return p===0 ? 0 : (0xffffffff << (32 - p)) >>> 0;
+}
+function prefixFromHosts(h){
+  return 32 - Math.ceil(Math.log2(h + 2));
+}
+
+function calc(){
+  const err = document.getElementById('error');
+  err.textContent = '';
+  const table = document.getElementById('result');
+  const tbody = table.querySelector('tbody');
+  tbody.innerHTML = '';
+
+  let [baseIp, basePref] = document.getElementById('base').value.trim().split('/');
+  basePref = Number(basePref);
+
+  const baseMask = maskFromPrefix(basePref);
+  const baseStart = ipToInt(baseIp) & baseMask;
+  const baseSize = 2 ** (32 - basePref);
+  const baseEnd = baseStart + baseSize - 1;
+
+  let hosts = document.getElementById('hosts').value
+    .split(',')
+    .map(x => Number(x.trim()))
+    .filter(x => x > 0)
+    .sort((a,b) => b - a);
+
+  if(!hosts.length){
+    err.textContent = 'Не указаны подсети';
+    return;
+  }
+
+  let current = baseStart;
+
+  for(let i=0;i<hosts.length;i++){
+    const need = hosts[i];
+    const pref = prefixFromHosts(need);
+
+    if(pref < basePref){
+      err.textContent = 'Подсеть больше базовой сети';
+      return;
+    }
+
+    const size = 2 ** (32 - pref);
+    const network = current;
+    const broadcast = network + size - 1;
+
+    if(broadcast > baseEnd){
+      err.textContent = 'Подсети выходят за пределы базовой сети';
+      return;
+    }
+
+    const mask = maskFromPrefix(pref);
+    const first = pref >= 31 ? network : network + 1;
+    const last  = pref >= 31 ? broadcast : broadcast - 1;
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${i+1}</td>
+      <td>${need}</td>
+      <td>${intToIp(network)}</td>
+      <td>/${pref}</td>
+      <td>${intToIp(mask)}</td>
+      <td>${intToIp(first)}</td>
+      <td>${intToIp(last)}</td>
+      <td>${intToIp(broadcast)}</td>
+    `;
+    tbody.appendChild(tr);
+
+    current = broadcast + 1;
+  }
+
+  table.style.display = '';
+}
+</script>
+</body>
+</html>

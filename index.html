@@ -2,13 +2,12 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<title>VLSM-калькулятор</title>
+<title>VLSM / FLSM калькулятор</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 body { font-family: Arial, sans-serif; margin:16px; color:#111; }
 label { display:block; margin-top:10px; font-weight:600; }
-input, button { font:inherit; padding:6px; margin-top:6px; width:100%; }
-button { width:auto; margin-top:12px; }
+input, select { font:inherit; padding:6px; margin-top:6px; width:100%; }
 table { border-collapse:collapse; width:100%; margin-top:16px; }
 th, td { border-bottom:1px solid #eee; padding:6px 8px; font-family:monospace; }
 th { background:#f2f2f2; font-family:inherit; }
@@ -18,26 +17,44 @@ th { background:#f2f2f2; font-family:inherit; }
 </head>
 
 <body>
-<h1>VLSM-калькулятор</h1>
+<h1>VLSM / FLSM калькулятор</h1>
 
 <label>Базовая сеть</label>
 <input id="base" value="192.168.1.0/24">
 
-<label>Подсети (нужно хостов)</label>
-<input id="hosts" value="50, 20, 10, 5">
-<div class="small">Через запятую, порядок не важен</div>
+<label>Режим</label>
+<select id="mode">
+  <option value="vlsm">VLSM (разные хосты)</option>
+  <option value="flsmCount">Равные подсети (по количеству)</option>
+  <option value="flsmHosts">Равные подсети (по хостам)</option>
+</select>
 
-<button onclick="calc()">Рассчитать</button>
+<div id="vlsmBlock">
+  <label>Подсети (нужно хостов)</label>
+  <input id="hostsList" value="50, 20, 10, 5">
+</div>
+
+<div id="flsmCountBlock" style="display:none">
+  <label>Количество равных подсетей</label>
+  <input id="netCount" type="number" min="1" value="4">
+</div>
+
+<div id="flsmHostsBlock" style="display:none">
+  <label>Хостов в каждой подсети</label>
+  <input id="hostsPerNet" type="number" min="1" value="30">
+</div>
+
 <div id="error" class="error"></div>
 
 <table id="result" style="display:none">
 <thead>
 <tr>
   <th>#</th>
-  <th>Хостов</th>
   <th>Сеть</th>
   <th>Префикс</th>
   <th>Маска</th>
+  <th>Всего адресов</th>
+  <th>Usable</th>
   <th>Первый usable</th>
   <th>Последний usable</th>
   <th>Broadcast</th>
@@ -47,87 +64,112 @@ th { background:#f2f2f2; font-family:inherit; }
 </table>
 
 <script>
-function ipToInt(ip){
-  return ip.split('.').reduce((a,b)=>a*256+Number(b),0)>>>0;
-}
-function intToIp(i){
-  return [(i>>>24)&255,(i>>>16)&255,(i>>>8)&255,i&255].join('.');
-}
-function maskFromPrefix(p){
-  return p===0 ? 0 : (0xffffffff << (32 - p)) >>> 0;
-}
-function prefixFromHosts(h){
-  return 32 - Math.ceil(Math.log2(h + 2));
-}
+const ipToInt = ip => ip.split('.').reduce((a,b)=>a*256+Number(b),0)>>>0;
+const intToIp = i => [(i>>>24)&255,(i>>>16)&255,(i>>>8)&255,i&255].join('.');
+const maskFromPrefix = p => p===0?0:(0xffffffff<<(32-p))>>>0;
+const prefixFromHosts = h => 32 - Math.ceil(Math.log2(h+2));
+
+document.querySelectorAll('input,select').forEach(e =>
+  e.addEventListener('input', calc)
+);
+
+mode.addEventListener('change', ()=>{
+  vlsmBlock.style.display = mode.value==='vlsm' ? '' : 'none';
+  flsmCountBlock.style.display = mode.value==='flsmCount' ? '' : 'none';
+  flsmHostsBlock.style.display = mode.value==='flsmHosts' ? '' : 'none';
+  calc();
+});
 
 function calc(){
-  const err = document.getElementById('error');
-  err.textContent = '';
-  const table = document.getElementById('result');
-  const tbody = table.querySelector('tbody');
-  tbody.innerHTML = '';
+  error.textContent='';
+  result.style.display='none';
+  result.querySelector('tbody').innerHTML='';
 
-  let [baseIp, basePref] = document.getElementById('base').value.trim().split('/');
+  if(!base.value.includes('/')) return;
+
+  let [baseIp, basePref] = base.value.split('/');
   basePref = Number(basePref);
 
-  const baseMask = maskFromPrefix(basePref);
-  const baseStart = ipToInt(baseIp) & baseMask;
-  const baseSize = 2 ** (32 - basePref);
+  const baseStart = ipToInt(baseIp) & maskFromPrefix(basePref);
+  const baseSize = 2 ** (32-basePref);
   const baseEnd = baseStart + baseSize - 1;
 
-  let hosts = document.getElementById('hosts').value
-    .split(',')
-    .map(x => Number(x.trim()))
-    .filter(x => x > 0)
-    .sort((a,b) => b - a);
-
-  if(!hosts.length){
-    err.textContent = 'Не указаны подсети';
-    return;
-  }
-
+  let rows = [];
   let current = baseStart;
 
-  for(let i=0;i<hosts.length;i++){
-    const need = hosts[i];
-    const pref = prefixFromHosts(need);
+  if(mode.value==='vlsm'){
+    let hosts = hostsList.value.split(',')
+      .map(x=>Number(x.trim()))
+      .filter(x=>x>0)
+      .sort((a,b)=>b-a);
 
-    if(pref < basePref){
-      err.textContent = 'Подсеть больше базовой сети';
-      return;
+    for(let h of hosts){
+      const pref = prefixFromHosts(h);
+      const size = 2 ** (32-pref);
+      const bc = current + size - 1;
+      if(bc > baseEnd){ error.textContent='Подсети выходят за пределы базовой сети'; return; }
+      rows.push(makeRow(current,pref,bc));
+      current = bc + 1;
     }
+  }
 
-    const size = 2 ** (32 - pref);
-    const network = current;
-    const broadcast = network + size - 1;
+  if(mode.value==='flsmCount'){
+    const n = Number(netCount.value);
+    const bits = Math.ceil(Math.log2(n));
+    const pref = basePref + bits;
+    const size = 2 ** (32-pref);
 
-    if(broadcast > baseEnd){
-      err.textContent = 'Подсети выходят за пределы базовой сети';
-      return;
+    for(let i=0;i<n;i++){
+      const bc = current + size - 1;
+      if(bc > baseEnd){ error.textContent='Слишком много подсетей'; return; }
+      rows.push(makeRow(current,pref,bc));
+      current = bc + 1;
     }
+  }
 
-    const mask = maskFromPrefix(pref);
-    const first = pref >= 31 ? network : network + 1;
-    const last  = pref >= 31 ? broadcast : broadcast - 1;
+  if(mode.value==='flsmHosts'){
+    const h = Number(hostsPerNet.value);
+    const pref = prefixFromHosts(h);
+    const size = 2 ** (32-pref);
+
+    while(current + size - 1 <= baseEnd){
+      const bc = current + size - 1;
+      rows.push(makeRow(current,pref,bc));
+      current = bc + 1;
+    }
+  }
+
+  rows.forEach((r,i)=>{
+    const total = 2 ** (32 - r.pref);
+    const usable = r.pref >= 31 ? total : total - 2;
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${i+1}</td>
-      <td>${need}</td>
-      <td>${intToIp(network)}</td>
-      <td>/${pref}</td>
-      <td>${intToIp(mask)}</td>
-      <td>${intToIp(first)}</td>
-      <td>${intToIp(last)}</td>
-      <td>${intToIp(broadcast)}</td>
+      <td>${intToIp(r.net)}</td>
+      <td>/${r.pref}</td>
+      <td>${intToIp(maskFromPrefix(r.pref))}</td>
+      <td>${total}</td>
+      <td>${usable}</td>
+      <td>${intToIp(r.first)}</td>
+      <td>${intToIp(r.last)}</td>
+      <td>${intToIp(r.bc)}</td>
     `;
-    tbody.appendChild(tr);
+    result.querySelector('tbody').appendChild(tr);
+  });
 
-    current = broadcast + 1;
-  }
-
-  table.style.display = '';
+  result.style.display='';
 }
+
+function makeRow(net,pref,bc){
+  return {
+    net, pref, bc,
+    first: pref>=31?net:net+1,
+    last: pref>=31?bc:bc-1
+  };
+}
+
+calc();
 </script>
 </body>
 </html>
